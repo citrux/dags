@@ -225,6 +225,26 @@ void wavelet_power(const double *signal, int n, double dt, double *power,
     }
 }
 
+// remove trend before use it
+double steps(const double *signal, int n, double dt) {
+    size_t m = 85;
+    double power[m], frequencies[m], signif[m];
+    wavelet_power(signal, n, dt, power, frequencies, signif, m, 0.95);
+
+    int max_ind = 0;
+    for (int i = 1; i < m; ++i) {
+        if (power[i] > power[max_ind]) {
+            max_ind = i;
+        }
+    }
+    
+    if (signif[max_ind] > power[max_ind]) {
+        return 0;
+    }
+
+    return frequencies[max_ind] * n * dt;
+}
+
 
 int main() {
     FILE *f;
