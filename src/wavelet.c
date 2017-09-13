@@ -87,10 +87,10 @@ float ar1(const float complex *signal, size_t n) {
     float c0 = 0, c1 = 0;
     for (size_t i = 0; i < n - 1; ++i)
     {
-        c0 += signal[i] * signal[i];
-        c1 += signal[i] * signal[i+1];
+        c0 += crealf(signal[i]) * crealf(signal[i]);
+        c1 += crealf(signal[i]) * crealf(signal[i+1]);
     }
-    c0 += signal[n-1] * signal[n-1];
+    c0 += crealf(signal[n-1]) * crealf(signal[n-1]);
     c0 /= n;
     c1 /= (n - 1);
 
@@ -99,7 +99,7 @@ float ar1(const float complex *signal, size_t n) {
     float B = -c1 * n - c0 * n * n - 2 * c0 + 2 * c1 - c1 * n * n + c0 * n;
     float C = n * (c0 + c1 * n - c1);
     float D = B * B - 4 * A * C;
-
+    if (D < 0) { return 0.99; } /* It isn't science! */
     return (-B - sqrtf(D)) / (2 * A);
 }
 
@@ -143,14 +143,13 @@ uint16_t steps() {
     float alpha = ar1(BUFFER, BUFFER_SIZE);
 
     /* calculate variance */
-    float mean = 0, m2 = 0;
+    float mean = 0, variance = 0;
     for (size_t i = 0; i < BUFFER_SIZE; ++i) {
         float delta = crealf(BUFFER[i]) - mean;
         mean += delta / (i + 1);
         float delta2 = crealf(BUFFER[i]) - mean;
-        m2 += delta * delta2;
+        variance += (delta * delta2 - variance) / (i + 1);
     }
-    float variance = m2 / BUFFER_SIZE;
 
     /* scale step */
     float dj = 1.0 / 12;
@@ -186,7 +185,7 @@ uint16_t steps() {
 
         float power = 0;
         for (size_t k = 0; k < BUFFER_SIZE; ++k) {
-            power += powf(cabsf(BUFFER[k]), 2);
+            power += (powf(cabsf(BUFFER[k]), 2) - power) / (k + 1);
         }
 
         if (power > max_power) {
