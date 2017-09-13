@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include "wavelet.h"
 
+#define MAX_BUFFER_SIZE 256 // must be 2^n
+#define N_FREQS 85
+
 #define wavelet_f0      6
 #define wavelet_dofmin  2
 #define wavelet_cdelta  0.776
@@ -14,6 +17,12 @@
 float wavelet_psi_ft(float f) {
     return powf(M_PI, -0.25) * expf(-0.5 * powf(f - wavelet_f0, 2));
 }
+
+float complex BUFFER[MAX_BUFFER_SIZE];
+float complex FFT[MAX_BUFFER_SIZE];
+float complex FFT_CONV[MAX_BUFFER_SIZE];
+
+size_t BUFFER_SIZE = 0;
 
 /********** FFT ********/
 void fft_bit_rev(float complex const *in,
@@ -73,10 +82,10 @@ int ifft(float complex const *in, float complex *out, size_t n) {
 /********* FFT ********/
 
 // Estimate of the lag-one autocorrelation.
-float ar1(const float *signal, int n) {
+float ar1(const float complex *signal, size_t n) {
     // Estimates the lag zero and one covariance
     float c0 = 0, c1 = 0;
-    for (int i = 0; i < n - 1; ++i)
+    for (size_t i = 0; i < n - 1; ++i)
     {
         c0 += signal[i] * signal[i];
         c1 += signal[i] * signal[i+1];
@@ -104,110 +113,118 @@ float chi2_ppf_95(float dof) {
     return 9.27863 + 1.157 * dof;
 }
 
-void wavelet_power(const float *signal, size_t n, float dt, float *power,
-                   float *frequencies, float *signif, size_t m) {
-    /* scale step */
-    float dj = 1.0 / 12;
-    /* Minimal wavelet scale */
-    float s0 = 2 * dt / wavelet_flambda;
+float ftfreq(size_t i, size_t n) {
+    if (2 * i < n) {
+        return 2 * M_PI * i / n;
+    }
+    return -2 * M_PI * (n - i) / n;
+}
 
-    /* Find the nearest power of 2, greater than n */
-    size_t N = 1;
-    while (N < n) { N *= 2; }
-
-    float complex image[N];
-    float complex image_conv[N];
-    float complex preimage[N];
-
-    /* convert float to float complex */
+void remove_trend(float complex *signal, size_t n) {
+    float sumx = (n - 1) * n / 2,
+          sumx2 = n * (n - 1) * (2 * n - 1) / 6,
+          sumy=0, sumxy=0;
     for (size_t i = 0; i < n; ++i) {
-        preimage[i] = signal[i];
-    }
-    for (size_t i = n; i < N; ++i) {
-        preimage[i] = 0;
-    }
-
-    /* perform FT */
-    fft(preimage, image, N);
-
-    float ftfrequencies[N];
-    for (size_t i = 0; i < N; ++i) {
-        if (2 * i < N) {
-            ftfrequencies[i] = 2 * M_PI * i / dt / N;
-        } else {
-            ftfrequencies[i] = 2 * M_PI * (i - N) / dt / N;
-        }
+        printf("%f %f\n", crealf(signal[i]), sumy);
+        sumy += crealf(signal[i]);
+        sumxy += i * crealf(signal[i]);
     }
 
-    float scales[m];
-    for (size_t i = 0; i < m; ++i) {
-        scales[i] = s0 * powf(2.0, i * dj);
-        frequencies[i] = 1 / (wavelet_flambda * scales[i]);
-    }
-    for (size_t i = 0; i < m; ++i) {
-        for (size_t k = 0; k < N; ++k) {
-            float psi_ft_bar = sqrtf(scales[i] * ftfrequencies[1] * N) *
-                                  wavelet_psi_ft(scales[i] * ftfrequencies[k]);
-            image_conv[k] = image[k] * psi_ft_bar;
-        }
+    float a = (n * sumxy - sumx * sumy) / (n * sumx2 - sumx * sumx);
+    float b = -(sumx * sumxy - sumx2 * sumy) / (n * sumx2 - sumx * sumx);
 
-        ifft(image_conv, preimage, N);
+    printf("%f %f %f %f %f %f\n", a, b, sumx, sumx2, sumy, sumxy);
 
-        power[i] = 0;
-        for (size_t k = 0; k < n; ++k) {
-            power[i] += powf(cabs(preimage[k]), 2);
-        }
-        power[i] /= n;
-    }
-
-    /* calculate autocorrelation */
-    float alpha = ar1(signal, n);
-
-    /* now calculate significance */
-    float mean = 0, m2 = 0;
     for (size_t i = 0; i < n; ++i) {
-        float delta = signal[i] - mean;
-        mean += delta / (i + 1);
-        float delta2 = signal[i] - mean;
-        m2 += delta * delta2;
-    }
-    float variance = m2 / n;
-
-    float dofmin = wavelet_dofmin;     // Degrees of freedom with no smoothing
-    // float Cdelta = wavelet_cdelta;     // Reconstruction factor
-    float gamma_fac = wavelet_gamma;   // Time-decorrelation factor
-    // float dj0 = wavelet_deltaj0;       // Scale-decorrelation factor
-
-    /* Time-averaged significance*/
-    for (size_t i = 0; i < m; ++i) {
-        float dof = n - scales[i];
-        if (dof < 1) { dof = 1; }
-        dof = dofmin * sqrtf(1 + powf(dof * dt / gamma_fac / scales[i], 2));
-        if (dof < dofmin) { dof = dofmin; }
-        float chisquare = chi2_ppf_95(dof) / dof;
-        float fft_theor = variance * (1 - powf(alpha, 2)) /
-            (1 + powf(alpha, 2) -
-             2 * alpha * cos(2 * M_PI * frequencies[i] * dt / n));
-        signif[i] = fft_theor * chisquare;
+        signal[i] -= a * i + b;
     }
 }
 
-// remove trend before use it
-float steps(const float *signal, int n, float dt) {
-    size_t m = 85;
-    float power[m], frequencies[m], signif[m];
-    wavelet_power(signal, n, dt, power, frequencies, signif, m);
+uint16_t steps() {
+    remove_trend(BUFFER, BUFFER_SIZE);
+    /* calculate autocorrelation */
+    float alpha = ar1(BUFFER, BUFFER_SIZE);
 
-    int max_ind = 0;
-    for (size_t i = 1; i < m; ++i) {
-        if (power[i] > power[max_ind]) {
-            max_ind = i;
+    /* calculate variance */
+    float mean = 0, m2 = 0;
+    for (size_t i = 0; i < BUFFER_SIZE; ++i) {
+        float delta = crealf(BUFFER[i]) - mean;
+        mean += delta / (i + 1);
+        float delta2 = crealf(BUFFER[i]) - mean;
+        m2 += delta * delta2;
+    }
+    float variance = m2 / BUFFER_SIZE;
+    printf("%f %f\n", variance, m2);
+
+
+    /* scale step */
+    float dj = 1.0 / 12;
+    /* Minimal wavelet scale */
+    float s0 = 2 / wavelet_flambda;
+
+    for (size_t i = BUFFER_SIZE; i < MAX_BUFFER_SIZE; ++i) {
+        BUFFER[i] = 0;
+    }
+
+    /* perform FT */
+    fft(BUFFER, FFT, MAX_BUFFER_SIZE);
+
+    float max_power = 0;
+    float max_freq = 0;
+    float max_signif = 0;
+    float dofmin = wavelet_dofmin;     // Degrees of freedom with no smoothing
+    float gamma_fac = wavelet_gamma;   // Time-decorrelation factor
+    
+    for (size_t i = 0; i < N_FREQS; ++i) {
+        float scale = s0 * powf(2.0, i * dj);
+        float freq = 1 / (wavelet_flambda * scale);
+        for (size_t k = 0; k < MAX_BUFFER_SIZE; ++k) {
+            float psi_ft_bar = sqrtf(scale
+                                   * ftfreq(1, MAX_BUFFER_SIZE)
+                                   * MAX_BUFFER_SIZE)
+                             * wavelet_psi_ft(scale
+                                            * ftfreq(k, MAX_BUFFER_SIZE));
+            FFT_CONV[k] = FFT[k] * psi_ft_bar;
+        }
+
+        ifft(FFT_CONV, BUFFER, MAX_BUFFER_SIZE);
+
+        float power = 0;
+        for (size_t k = 0; k < BUFFER_SIZE; ++k) {
+            power += powf(cabsf(BUFFER[k]), 2);
+        }
+
+        if (power > max_power) {
+            max_power = power;
+            max_freq = freq;
+
+            float dof = BUFFER_SIZE - scale;
+            if (dof < 1) { dof = 1; }
+            dof = dofmin * sqrtf(1 + powf(dof / gamma_fac / scale, 2));
+            if (dof < dofmin) { dof = dofmin; }
+            float chisquare = chi2_ppf_95(dof) / dof;
+            float fft_theor = variance * (1 - powf(alpha, 2)) /
+                (1 + powf(alpha, 2) -
+                 2 * alpha * cos(2 * M_PI * freq / BUFFER_SIZE));
+            max_signif = fft_theor * chisquare;
         }
     }
-    
-    if (signif[max_ind] > power[max_ind]) {
-        return 0;
+
+    if (max_power > max_signif) {
+        return max_freq * BUFFER_SIZE;
     }
 
-    return frequencies[max_ind] * n * dt;
+    return 0;
+}
+
+void waveletProcessNewData(uint16_t x, uint16_t y, uint16_t z, uint16_t time) {
+    if (BUFFER_SIZE < MAX_BUFFER_SIZE) {
+        BUFFER[BUFFER_SIZE++] = sqrtf(x * x + y * y + z * z);
+    }
+}
+
+uint16_t waveletGetStepsCount(void) {
+    uint16_t count = steps();
+    BUFFER_SIZE = 0;
+    return count;
 }
