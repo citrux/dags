@@ -95,50 +95,17 @@ float ar1(const float *signal, int n) {
 }
 
 
-// bad results for small dof due to singularity at 0
-float chi2_ppf(float significance, float dof) {
-    float integrate(float (*f)(float), float a, float b) {
-        int n = 5;
-        float x[5] = {-0.90618, -0.538469, 0, 0.538469, 0.90618};
-        float w[5] = {0.236927, 0.478629, 0.568889, 0.478629, 0.236927};
-        float sum = 0;
-        for (int i = 0; i < n; ++i)
-        {
-            sum += w[i] * f(((b - a) * x[i] + (b + a)) / 2);
-        }
-        sum *= (b - a) / 2;
-        return sum;
+// A chi-squared percent point function for 95%
+float chi2_ppf_95(float dof) {
+    if (dof < 20) {
+        return 2.10308 + 1.98911 * dof - 0.0464057 * powf(dof, 2)
+             + 0.00102171 * powf(dof, 3);
     }
-
-    float f(float x) {
-      return powf(x, dof/2-1) * expf(-x);
-    }
-
-    float G = 0;
-    for (int i = 0; i < (int)(10 * dof) + 1; ++i) {
-        G += integrate(f, i, i + 1);
-    }
-    printf("G(%f/2) = %f\n", dof, G);
-
-    G *= significance;
-    float result = 0;
-    float g = 0;
-    float step = 1;
-    while (g < G) {
-        float add = integrate(f, result, result + step);
-        if (g + add > G && step > 1e-7) {
-            step /= 2;
-            continue;
-        }
-        g += add;
-        result += step;
-    }
-    return result * 2;
+    return 9.27863 + 1.157 * dof;
 }
 
 void wavelet_power(const float *signal, size_t n, float dt, float *power,
-                   float *frequencies, float *signif, size_t m,
-                   float significance_level) {
+                   float *frequencies, float *signif, size_t m) {
     /* scale step */
     float dj = 1.0 / 12;
     /* Minimal wavelet scale */
@@ -217,7 +184,7 @@ void wavelet_power(const float *signal, size_t n, float dt, float *power,
         if (dof < 1) { dof = 1; }
         dof = dofmin * sqrtf(1 + powf(dof * dt / gamma_fac / scales[i], 2));
         if (dof < dofmin) { dof = dofmin; }
-        float chisquare = chi2_ppf(significance_level, dof) / dof;
+        float chisquare = chi2_ppf_95(dof) / dof;
         float fft_theor = variance * (1 - powf(alpha, 2)) /
             (1 + powf(alpha, 2) -
              2 * alpha * cos(2 * M_PI * frequencies[i] * dt / n));
@@ -229,7 +196,7 @@ void wavelet_power(const float *signal, size_t n, float dt, float *power,
 float steps(const float *signal, int n, float dt) {
     size_t m = 85;
     float power[m], frequencies[m], signif[m];
-    wavelet_power(signal, n, dt, power, frequencies, signif, m, 0.95);
+    wavelet_power(signal, n, dt, power, frequencies, signif, m);
 
     int max_ind = 0;
     for (size_t i = 1; i < m; ++i) {
@@ -262,7 +229,7 @@ int main() {
 
     size_t m = 85;
     float power[m], frequencies[m], signif[m];
-    wavelet_power(signal, n, 1, power, frequencies, signif, m, 0.95);
+    wavelet_power(signal, n, 1, power, frequencies, signif, m);
 
     f = fopen("output.dat", "w");
     for (size_t i = 0; i < m; ++i) {
