@@ -125,15 +125,12 @@ void remove_trend(float complex *signal, size_t n) {
           sumx2 = n * (n - 1) * (2 * n - 1) / 6,
           sumy=0, sumxy=0;
     for (size_t i = 0; i < n; ++i) {
-        printf("%f %f\n", crealf(signal[i]), sumy);
         sumy += crealf(signal[i]);
         sumxy += i * crealf(signal[i]);
     }
 
     float a = (n * sumxy - sumx * sumy) / (n * sumx2 - sumx * sumx);
     float b = -(sumx * sumxy - sumx2 * sumy) / (n * sumx2 - sumx * sumx);
-
-    printf("%f %f %f %f %f %f\n", a, b, sumx, sumx2, sumy, sumxy);
 
     for (size_t i = 0; i < n; ++i) {
         signal[i] -= a * i + b;
@@ -154,8 +151,6 @@ uint16_t steps() {
         m2 += delta * delta2;
     }
     float variance = m2 / BUFFER_SIZE;
-    printf("%f %f\n", variance, m2);
-
 
     /* scale step */
     float dj = 1.0 / 12;
@@ -211,13 +206,14 @@ uint16_t steps() {
     }
 
     if (max_power > max_signif) {
-        return max_freq * BUFFER_SIZE;
+        printf("%f\n", max_freq * BUFFER_SIZE);
+        return roundf(max_freq * BUFFER_SIZE);
     }
 
     return 0;
 }
 
-void waveletProcessNewData(uint16_t x, uint16_t y, uint16_t z, uint16_t time) {
+void waveletProcessNewData(int16_t x, int16_t y, int16_t z, uint16_t time) {
     if (BUFFER_SIZE < MAX_BUFFER_SIZE) {
         BUFFER[BUFFER_SIZE++] = sqrtf(x * x + y * y + z * z);
     }
