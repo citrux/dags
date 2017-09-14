@@ -2,6 +2,7 @@
 #include <math.h>
 #include <complex.h>
 #include <stdbool.h>
+#include "wavelet.h"
 
 #define wavelet_f0      6
 #define wavelet_dofmin  2
@@ -89,61 +90,44 @@ double ar1(const double *signal, int n) {
     double B = -c1 * n - c0 * n * n - 2 * c0 + 2 * c1 - c1 * n * n + c0 * n;
     double C = n * (c0 + c1 * n - c1);
     double D = B * B - 4 * A * C;
+    if (D < 0) { return 0.9; }
 
     return (-B - sqrt(D)) / (2 * A);
 }
 
-
-// bad results for small dof due to singularity at 0
-double chi2_ppf(double significance, double dof) {
-    double integrate(double (*f)(double), double a, double b) {
-        int n = 5;
-        double x[5] = {-0.90618, -0.538469, 0, 0.538469, 0.90618};
-        double w[5] = {0.236927, 0.478629, 0.568889, 0.478629, 0.236927};
-        double sum = 0;
-        for (int i = 0; i < n; ++i)
-        {
-            sum += w[i] * f(((b - a) * x[i] + (b + a)) / 2);
-        }
-        sum *= (b - a) / 2;
-        return sum;
+void remove_trend(double *signal, size_t n) {
+    double sumx = (n - 1) * n / 2,
+          sumx2 = n * (n - 1) * (2 * n - 1) / 6,
+          sumy=0, sumxy=0;
+    for (size_t i = 0; i < n; ++i) {
+        sumy += crealf(signal[i]);
+        sumxy += i * crealf(signal[i]);
     }
 
-    double f(double x) {
-      return pow(x, dof/2-1) * exp(-x);
-    }
+    double a = (n * sumxy - sumx * sumy) / (n * sumx2 - sumx * sumx);
+    double b = -(sumx * sumxy - sumx2 * sumy) / (n * sumx2 - sumx * sumx);
 
-    double G = 0;
-    for (int i = 0; i < (int)(10 * dof) + 1; ++i) {
-        G += integrate(f, i, i + 1);
+    for (size_t i = 0; i < n; ++i) {
+        signal[i] -= a * i + b;
     }
-    // printf("G(%f) = %f\n", dof/2, G);
-
-    G *= significance;
-    double result = 0;
-    double g = 0;
-    double step = 1;
-    while (g < G) {
-        double add = integrate(f, result, result + step);
-        if (g + add > G && step > 1e-7) {
-            step /= 2;
-            continue;
-        }
-        g += add;
-        result += step;
-    }
-    // printf("g = %f\n", g);
-    return result * 2;
 }
 
-void wavelet_power(const double *signal, int n, double dt, double *power,
-                   double *frequencies, double *signif, int m,
-                   double significance_level) {
+double chi2_ppf_95(double dof) {
+    if (dof < 20) {
+        return 2.10308 + 1.98911 * dof - 0.0464057 * powf(dof, 2)
+             + 0.00102171 * powf(dof, 3);
+    }
+    return 9.27863 + 1.157 * dof;
+}
+
+void wavelet_power(double *signal, int n, double dt, double *power,
+                   double *frequencies, double *signif, int m) {
     /* scale step */
     double dj = 1.0 / 12;
     /* Minimal wavelet scale */
     double s0 = 2 * dt / wavelet_flambda;
 
+    remove_trend(signal, n);
     /* Find the nearest power of 2, greater than n */
     int N = 1;
     while (N < n) { N *= 2; }
@@ -213,60 +197,14 @@ void wavelet_power(const double *signal, int n, double dt, double *power,
 
     /* Time-averaged significance*/
     for (int i = 0; i < m; ++i) {
-        double dof = n - scales[i];
+        double dof = n; //- scales[i];
         if (dof < 1) { dof = 1; }
         dof = dofmin * sqrt(1 + pow(dof * dt / gamma_fac / scales[i], 2));
         if (dof < dofmin) { dof = dofmin; }
-        double chisquare = chi2_ppf(significance_level, dof) / dof;
+        double chisquare = chi2_ppf_95(dof) / dof;
         double fft_theor = variance * (1 - pow(alpha, 2)) /
             (1 + pow(alpha, 2) -
              2 * alpha * cos(2 * M_PI * frequencies[i] * dt / n));
         signif[i] = fft_theor * chisquare;
     }
-}
-
-// remove trend before use it
-double steps(const double *signal, int n, double dt) {
-    size_t m = 85;
-    double power[m], frequencies[m], signif[m];
-    wavelet_power(signal, n, dt, power, frequencies, signif, m, 0.95);
-
-    int max_ind = 0;
-    for (int i = 1; i < m; ++i) {
-        if (power[i] > power[max_ind]) {
-            max_ind = i;
-        }
-    }
-    
-    if (signif[max_ind] > power[max_ind]) {
-        return 0;
-    }
-
-    return frequencies[max_ind] * n * dt;
-}
-
-
-int main() {
-    FILE *f;
-    f = fopen("input.dat", "r");
-
-    int n;
-    fscanf(f, "%d", &n);
-
-    double signal[n];
-    for (size_t i = 0; i < n; ++i) {
-        fscanf(f, "%lf", signal + i);
-    }
-
-    fclose(f);
-
-    size_t m = 85;
-    double power[m], frequencies[m], signif[m];
-    wavelet_power(signal, n, 1, power, frequencies, signif, m, 0.95);
-
-    f = fopen("output.dat", "w");
-    for (size_t i = 0; i < m; ++i) {
-        fprintf(f, "%f %f %f\n", frequencies[i], power[i], signif[i]);
-    }
-    fclose(f);
 }
