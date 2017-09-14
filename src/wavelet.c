@@ -214,7 +214,10 @@ uint16_t steps() {
 
 void waveletProcessNewData(int16_t x, int16_t y, int16_t z, uint16_t time) {
     if (BUFFER_SIZE < MAX_BUFFER_SIZE) {
-        BUFFER[BUFFER_SIZE++] = sqrtf(x * x + y * y + z * z);
+        float xf = x;
+        float yf = y;
+        float zf = z;
+        BUFFER[BUFFER_SIZE++] = sqrtf(xf * xf + yf * yf + zf * zf);
     }
 }
 
