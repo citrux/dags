@@ -204,7 +204,7 @@ void wavelet_power(double *signal, int n, double dt, double *power,
         double chisquare = chi2_ppf_95(dof) / dof;
         double fft_theor = variance * (1 - pow(alpha, 2)) /
             (1 + pow(alpha, 2) -
-             2 * alpha * cos(2 * M_PI * frequencies[i] * dt / n));
+             2 * alpha * cos(2 * M_PI * frequencies[i] * dt));
         signif[i] = fft_theor * chisquare;
     }
 }
