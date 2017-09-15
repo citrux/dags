@@ -23,6 +23,9 @@ int main(int argc, char const *argv[])
             i = 0;
         }
     }
+    if (i > 0) {
+        steps += waveletGetStepsCount();
+    }
     fclose(f);
     printf("%d\n", steps);
     return 0;

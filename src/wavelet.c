@@ -199,13 +199,12 @@ uint16_t steps() {
             float chisquare = chi2_ppf_95(dof) / dof;
             float fft_theor = variance * (1 - powf(alpha, 2)) /
                 (1 + powf(alpha, 2) -
-                 2 * alpha * cos(2 * M_PI * freq / BUFFER_SIZE));
+                 2 * alpha * cos(2 * M_PI * freq));
             max_signif = fft_theor * chisquare;
         }
     }
 
     if (max_power > max_signif) {
-        printf("%f\n", max_freq * BUFFER_SIZE);
         return roundf(max_freq * BUFFER_SIZE);
     }
 
