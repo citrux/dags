@@ -27,6 +27,10 @@ SOFTWARE.
 #include <stdbool.h>
 #include "wavelet.h"
 
+#ifndef I
+    #define I __I__
+#endif
+
 #define MAX_BUFFER_SIZE 256 // must be 2^n
 #define N_FREQS 85
 
