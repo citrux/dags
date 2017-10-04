@@ -52,8 +52,8 @@ void fft_bit_rev(complex const *in,
                 if (inverse) { e.im = -e.im; }
                 complex u = out[k + j];
                 complex v = cmul(e, out[k + j + m]);
-                v.re >> 16;
-                v.im >> 16;
+                v.re >>= 15;
+                v.im >>= 15;
                 out[k + j] = cadd(u, v);
                 out[k + j + m] = csub(u, v);
             }
