@@ -23,13 +23,8 @@ SOFTWARE.
 */
 
 #include <math.h>
-#include <complex.h>
 #include <stdbool.h>
 #include "wavelet.h"
-
-#ifndef I
-    #define I __I__
-#endif
 
 #define MAX_BUFFER_SIZE 256 // must be 2^n
 #define N_FREQS 85
@@ -44,17 +39,17 @@ float wavelet_psi_ft(float f) {
     return powf(PI, -0.25f) * expf(-0.5f * powf(f - wavelet_f0, 2));
 }
 
-float complex BUFFER[MAX_BUFFER_SIZE];
-float complex FFT[MAX_BUFFER_SIZE];
-float complex FFT_CONV[MAX_BUFFER_SIZE];
+float BUFFER[MAX_BUFFER_SIZE];
+float FFT_RE[MAX_BUFFER_SIZE];
+float FFT_IM[MAX_BUFFER_SIZE];
 
 uint16_t BUFFER_SIZE = 0;
 
 /********** FFT ********/
-void fft_bit_rev(float complex const *in,
-                 float complex *out,
-                 uint16_t n,
-                 bool inverse) {
+void fft(float const *in,
+         float *out_re,
+         float *out_im,
+         uint16_t n) {
 
     uint16_t bit_reverse(uint16_t a, uint16_t b) {
         uint16_t result = 0;
@@ -68,54 +63,44 @@ void fft_bit_rev(float complex const *in,
     }
 
     for (uint16_t i = 0; i < n; ++i) {
-        out[i] = in[bit_reverse(i, n - 1)];
+        out_re[i] = in[bit_reverse(i, n - 1)];
+        out_im[i] = 0;
     }
     for (uint16_t m = 1; m < n; m *= 2) {
-        float complex em = inverse ? cexpf(PI / m * I) : cexpf(-PI / m * I);
+        float em_re = cosf(PI / m);
+        float em_im = sinf(PI / m);
         for (uint16_t k = 0; k < n; k += 2 * m) {
-            float complex e = 1;
+            float e_re = 1;
+            float e_im = 0;
             for (uint16_t j = 0; j < m; ++j) {
-                float complex u = out[k + j];
-                float complex v = e * out[k + j + m];
-                out[k + j] = u + v;
-                out[k + j + m] = u - v;
-                e *= em;
+                float u_re = out_re[k + j];
+                float u_im = out_im[k + j];
+                float v_re = e_re * out_re[k + j + m] - e_im * out_im[k + j + m];
+                float v_im = e_re * out_im[k + j + m] + e_im * out_re[k + j + m];
+                out_re[k + j] = u_re + v_re;
+                out_im[k + j] = u_im + v_im;
+                out_re[k + j + m] = u_re - v_re;
+                out_im[k + j + m] = u_im - v_im;
+
+                float e_re_new = e_re * em_re - e_im * em_im;
+                e_im = e_re * em_im + e_im * em_re;
+                e_re = e_re_new;
             }
         }
     }
 }
 
-
-int fft(float complex const *in, float complex *out, uint16_t n) {
-    if (n & (n - 1)) {
-        return 1;
-    }
-    fft_bit_rev(in, out, n, false);
-    return 0;
-}
-
-int ifft(float complex const *in, float complex *out, uint16_t n) {
-    if (n & (n - 1)) {
-        return 1;
-    }
-    fft_bit_rev(in, out, n, true);
-    for (uint16_t i = 0; i < n; ++i) {
-        out[i] /= n;
-    }
-    return 0;
-}
-
 /********* FFT ********/
 
 // Estimate of the lag-one autocorrelation.
-float ar1(const float complex *signal, uint16_t n) {
+float ar1(const float *signal, uint16_t n) {
     // Estimates the lag zero and one covariance
     float c0 = 0, c1 = 0;
     for (uint16_t i = 0; i < n - 1; ++i) {
-        c0 += crealf(signal[i]) * crealf(signal[i]);
-        c1 += crealf(signal[i]) * crealf(signal[i + 1]);
+        c0 += signal[i] * signal[i];
+        c1 += signal[i] * signal[i + 1];
     }
-    c0 += crealf(signal[n - 1]) * crealf(signal[n - 1]);
+    c0 += signal[n - 1] * signal[n - 1];
     c0 /= n;
     c1 /= (n - 1);
 
@@ -145,13 +130,13 @@ float ftfreq(uint16_t i, uint16_t n) {
     return -2 * PI * (n - i) / n;
 }
 
-void remove_trend(float complex *signal, uint16_t n) {
+void remove_trend(float *signal, uint16_t n) {
     float sumx = (n - 1) * n / 2,
             sumx2 = n * (n - 1) * (2 * n - 1) / 6,
             sumy = 0, sumxy = 0;
     for (uint16_t i = 0; i < n; ++i) {
-        sumy += crealf(signal[i]);
-        sumxy += i * crealf(signal[i]);
+        sumy += signal[i];
+        sumxy += i * signal[i];
     }
 
     float a = (n * sumxy - sumx * sumy) / (n * sumx2 - sumx * sumx);
@@ -162,6 +147,7 @@ void remove_trend(float complex *signal, uint16_t n) {
     }
 }
 
+
 uint16_t steps() {
     remove_trend(BUFFER, BUFFER_SIZE);
     /* calculate autocorrelation */
@@ -170,9 +156,9 @@ uint16_t steps() {
     /* calculate variance */
     float mean = 0, variance = 0;
     for (uint16_t i = 0; i < BUFFER_SIZE; ++i) {
-        float delta = crealf(BUFFER[i]) - mean;
+        float delta = BUFFER[i] - mean;
         mean += delta / (i + 1);
-        float delta2 = crealf(BUFFER[i]) - mean;
+        float delta2 = BUFFER[i] - mean;
         variance += (delta * delta2 - variance) / (i + 1);
     }
 
@@ -186,7 +172,7 @@ uint16_t steps() {
     }
 
     /* perform FT */
-    fft(BUFFER, FFT, MAX_BUFFER_SIZE);
+    fft(BUFFER, FFT_RE, FFT_IM, MAX_BUFFER_SIZE);
 
     float max_power = 0;
     float max_freq = 0;
@@ -197,20 +183,14 @@ uint16_t steps() {
     for (uint16_t i = 0; i < N_FREQS; ++i) {
         float scale = s0 * powf(2.0, i * dj);
         float freq = 1 / (wavelet_flambda * scale);
+        float power = 0;
         for (uint16_t k = 0; k < MAX_BUFFER_SIZE; ++k) {
             float psi_ft_bar = sqrtf(scale
-                                     * ftfreq(1, MAX_BUFFER_SIZE)
-                                     * MAX_BUFFER_SIZE)
+                                     * ftfreq(1, MAX_BUFFER_SIZE))
                                * wavelet_psi_ft(scale
                                                 * ftfreq(k, MAX_BUFFER_SIZE));
-            FFT_CONV[k] = FFT[k] * psi_ft_bar;
-        }
-
-        ifft(FFT_CONV, BUFFER, MAX_BUFFER_SIZE);
-
-        float power = 0;
-        for (uint16_t k = 0; k < BUFFER_SIZE; ++k) {
-            power += (powf(cabsf(BUFFER[k]), 2) - power) / (k + 1);
+            float w2 = psi_ft_bar * psi_ft_bar * (FFT_RE[k] * FFT_RE[k] + FFT_IM[k] * FFT_IM[k]);
+            power += (w2 - power) / (k + 1);
         }
 
         if (power > max_power) {
@@ -235,6 +215,7 @@ uint16_t steps() {
 
     return 0;
 }
+
 
 void waveletProcessNewData(int16_t x, int16_t y, int16_t z, uint16_t time) {
     if (BUFFER_SIZE < MAX_BUFFER_SIZE) {
